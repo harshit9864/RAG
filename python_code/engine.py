@@ -96,6 +96,12 @@ IMPORTANT INSTRUCTIONS:
 - If you need to sum or calculate values, show your work
 - If the answer is not in the context, say "I cannot find this information in the provided context"
 
+IMPORTANT CITATION RULE:
+- Every time you state a fact, you MUST verify which "[Page X]" block it came from.
+- You must cite the page number at the end of the sentence.
+- Format citations exactly like this: [Page 5] or [Page 12].
+- Do not make up page numbers.
+
 Context: {context}
 
 Question: {question}
@@ -251,7 +257,13 @@ Answer:"""
         
         # We fetch the relevant documents first
         docs = self.multi_query_retriever.invoke(question)
-        context = "\n\n".join([d.page_content for d in docs])
+        # We format the context to look like this:
+        # [Page 5] Revenue was $10M...
+        # [Page 6] Costs were $2M...
+        context = "\n\n".join([
+            f"[Page {doc.metadata.get('page', 'Unknown')}] {doc.page_content}" 
+            for doc in docs
+        ])
         
         # 2. GENERATION (Streaming)
         # We use the existing chain you defined in __init__
