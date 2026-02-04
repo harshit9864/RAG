@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser';
 import axios from 'axios';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import {Chat} from './models/Chat.js';
+import {Chat} from './models/chat.js';
 import User from './models/User.js';
 import auth from './middleware/auth.js';
 

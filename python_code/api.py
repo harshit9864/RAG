@@ -10,12 +10,12 @@ app = FastAPI()
 class QueryRequest(BaseModel):
     question: str
 
-print("🔥 Initializing AI Engine...")
+print("Initializing AI Engine...")
 try:
     rag_engine = VeriDocEngine()
     print("✅ AI Engine Ready!")
 except Exception as e:
-    print(f"❌ Failed to initialize engine: {e}")
+    print(f" Failed to initialize engine: {e}")
     rag_engine = None
 
 @app.get("/")

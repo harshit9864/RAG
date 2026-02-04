@@ -266,7 +266,6 @@ export default function FinancialAgent() {
           </div>
         </header>
 
-        {/* FIX 3: Replaced ScrollArea with standard div overflow-y-auto */}
         <div className="flex-1 overflow-y-auto p-4 bg-slate-50/50">
           <div className="max-w-3xl mx-auto space-y-6 pb-4">
             {messages.map((msg, idx) => (
@@ -385,7 +384,6 @@ export default function FinancialAgent() {
         </div>
       </div>
 
-      {/* PDF VIEWER PANEL */}
       {isPdfOpen && (
         <PDFViewer
           file="/report.pdf"

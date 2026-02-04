@@ -7,8 +7,7 @@ if __name__ == "__main__":
     if os.path.exists(pdf_file):
         engine = VeriDocEngine()
         
-        # Uncomment this line ONLY when you want to ingest new data.
-        # Since we now have persistence, you can comment it out after the first run!
+
         # engine.ingest_document(pdf_file)
         
         test_queries = [

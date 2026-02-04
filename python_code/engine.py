@@ -23,11 +23,9 @@ from langchain_core.documents import Document
 
 load_dotenv()
 
-# --- CONFIGURATION ---
 LLM_MODEL = "accounts/fireworks/models/kimi-k2-instruct-0905"
 EMBEDDING_MODEL = "mistral-embed"
 
-# --- DATA MODELS ---
 class GradeAnswerQuality(BaseModel):
     binary_score: str = Field(description="Answer addresses the question, 'yes' or 'no'")
 
@@ -161,10 +159,6 @@ Answer:"""
 
         print("... Indexing Documents to MongoDB Atlas ...")
         
-        # ParentDocumentRetriever automatically handles:
-        # 1. Splitting Parents -> Children
-        # 2. Saving Children to VectorStore (Atlas 'reports' collection)
-        # 3. Saving Parents to DocStore (Atlas 'parent_docs' collection)
         self.base_retriever = ParentDocumentRetriever(
             vectorstore=self.vectorstore,
             docstore=self.docstore,
@@ -248,29 +242,19 @@ Answer:"""
         Generator function that yields the answer token-by-token.
         Uses the existing RAG chain.
         """
-        # 1. RETRIEVAL (Must happen before we can start generating)
-        # Check if retriever is ready
         if not self.multi_query_retriever:
             self._init_retriever()
             
         print(f"   > Streaming Query: {question}")
         
-        # We fetch the relevant documents first
         docs = self.multi_query_retriever.invoke(question)
-        # We format the context to look like this:
-        # [Page 5] Revenue was $10M...
-        # [Page 6] Costs were $2M...
         context = "\n\n".join([
             f"[Page {doc.metadata.get('page', 'Unknown')}] {doc.page_content}" 
             for doc in docs
         ])
         
-        # 2. GENERATION (Streaming)
-        # We use the existing chain you defined in __init__
-        # The input structure must match what the chain expects: {"context": ..., "question": ...}
         
         input_data = {"context": context, "question": question}
         
-        # .stream() automatically invokes the LLM in streaming mode
         for token in self.chains["rag"].stream(input_data):
             yield token

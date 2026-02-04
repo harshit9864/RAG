@@ -5,13 +5,12 @@ import { Document, Page, pdfjs } from "react-pdf";
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-// CRITICAL: Set up the worker for PDF.js
 // This allows React to render PDFs without freezing the browser
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 interface PDFViewerProps {
-  file: string; // Path to the PDF in public folder
-  pageNumber: number; // The page we want to see
+  file: string; 
+  pageNumber: number;
   onClose: () => void;
 }
 
@@ -24,7 +23,6 @@ export default function PDFViewer({
   const [scale, setScale] = useState(1.0);
   const [currentPage, setCurrentPage] = useState(pageNumber);
 
-  // Sync internal state if the prop changes (e.g., user clicks a different citation)
   React.useEffect(() => {
     setCurrentPage(pageNumber);
   }, [pageNumber]);

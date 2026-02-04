@@ -26,7 +26,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUser = async () => {
     try {
-      // We just call the endpoint. The browser handles the cookie automatically.
       const res = await axios.get('http://localhost:5000/api/auth/user');
       setUser(res.data);
     } catch (err) {
@@ -37,7 +36,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = () => {
-    // After login API succeeds, we just fetch user. Cookie is already set.
     fetchUser();
     router.push('/');
   };
