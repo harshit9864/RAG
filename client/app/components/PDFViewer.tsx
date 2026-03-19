@@ -12,12 +12,14 @@ interface PDFViewerProps {
   file: string; 
   pageNumber: number;
   onClose: () => void;
+  docName?: string;
 }
 
 export default function PDFViewer({
   file,
   pageNumber,
   onClose,
+  docName,
 }: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
   const [scale, setScale] = useState(1.0);
@@ -36,8 +38,8 @@ export default function PDFViewer({
       {/* Header Controls */}
       <div className="bg-white border-b px-4 py-2 flex items-center justify-between shadow-sm z-10">
         <div className="flex items-center gap-2">
-          <span className="font-bold text-slate-700 text-sm">
-            Source Document
+          <span className="font-bold text-slate-700 text-sm truncate max-w-[200px]">
+            {docName || "Source Document"}
           </span>
           <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
             Page {currentPage} of {numPages}

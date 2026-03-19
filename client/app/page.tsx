@@ -12,6 +12,12 @@ import {
   Loader2,
   LogOut,
   FileSearch,
+  Upload,
+  Trash2,
+  CheckSquare,
+  Square,
+  FileUp,
+  Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,12 +37,24 @@ const PDFViewer = dynamic(() => import("./components/PDFViewer"), {
   ),
 });
 
+const API_BASE = "http://localhost:5000";
+
 const generateSessionId = () =>
   `session_${Math.random().toString(36).substring(7)}`;
 
 type Message = {
   role: "user" | "assistant";
   content: string;
+};
+
+type UserDocument = {
+  _id: string;
+  name: string;
+  fileName: string;
+  userId: string;
+  fileUrl: string;
+  isDefault: boolean;
+  createdAt: string;
 };
 
 export default function FinancialAgent() {
@@ -52,6 +70,15 @@ export default function FinancialAgent() {
   // PDF State
   const [isPdfOpen, setIsPdfOpen] = useState(false);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
+  const [currentPdfUrl, setCurrentPdfUrl] = useState("");
+  const [currentPdfName, setCurrentPdfName] = useState("");
+
+  // Document Management State
+  const [documents, setDocuments] = useState<UserDocument[]>([]);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [loadingDocs, setLoadingDocs] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 1. Auth Check
   useEffect(() => {
@@ -71,7 +98,7 @@ export default function FinancialAgent() {
 
       try {
         const res = await axios.get(
-          `http://localhost:5000/api/history/${currentSessionId}`,
+          `${API_BASE}/api/history/${currentSessionId}`,
         );
         if (res.data.length > 0) {
           setMessages(
@@ -97,6 +124,27 @@ export default function FinancialAgent() {
     initializeSession();
   }, [user]);
 
+  // 3. Load Documents
+  useEffect(() => {
+    if (!user) return;
+    fetchDocuments();
+  }, [user]);
+
+  const fetchDocuments = async () => {
+    try {
+      setLoadingDocs(true);
+      const res = await axios.get(`${API_BASE}/api/documents`);
+      const docs: UserDocument[] = res.data;
+      setDocuments(docs);
+      // Auto-select all documents by default
+      setSelectedDocIds(new Set(docs.map((d) => d._id)));
+    } catch (error) {
+      console.error("Failed to fetch documents:", error);
+    } finally {
+      setLoadingDocs(false);
+    }
+  };
+
   // Auto-scroll
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -112,30 +160,100 @@ export default function FinancialAgent() {
     setIsPdfOpen(false);
   };
 
-  const preprocessText = (text: string) => {
-    // Regex explanation:
-    // \[Page : Matches literal "[Page "
-    // ([^\]]+) : Captures ANY character until the closing bracket (captures "37-38")
-    // \] : Matches literal closing bracket
-    return text.replace(/\[Page ([^\]]+)\]/g, (match, pageNumText) => {
-      // 1. We have the full text, e.g., "37-38"
-      // 2. parseInt stops at non-digits, so parseInt("37-38") returns 37.
-      const firstPage = parseInt(pageNumText);
+  // --- Document Management ---
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-      // 3. We construct the Markdown Link:
-      // Label: "[Page 37-38]" (Preserves the range visual)
-      // Link:  "http://open-pdf/page/37" (Jumps to the start page)
-      return ` **[Page ${pageNumText}](http://open-pdf/page/${firstPage})** `;
+    const formData = new FormData();
+    formData.append("document", file);
+
+    try {
+      setUploadingDoc(true);
+      const res = await axios.post(`${API_BASE}/api/documents/upload`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      // Add new doc to state and auto-select it
+      const newDoc: UserDocument = res.data;
+      setDocuments((prev) => [newDoc, ...prev]);
+      setSelectedDocIds((prev) => new Set([...prev, newDoc._id]));
+    } catch (error) {
+      console.error("Upload failed:", error);
+    } finally {
+      setUploadingDoc(false);
+      // Reset file input
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleDeleteDoc = async (docId: string) => {
+    try {
+      await axios.delete(`${API_BASE}/api/documents/${docId}`);
+      setDocuments((prev) => prev.filter((d) => d._id !== docId));
+      setSelectedDocIds((prev) => {
+        const next = new Set(prev);
+        next.delete(docId);
+        return next;
+      });
+    } catch (error) {
+      console.error("Delete failed:", error);
+    }
+  };
+
+  const toggleDocSelection = (docId: string) => {
+    setSelectedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) {
+        next.delete(docId);
+      } else {
+        next.add(docId);
+      }
+      return next;
     });
   };
 
-  const handlePdfClick = (page: number) => {
+  // --- Citation Parsing ---
+  const preprocessText = (text: string) => {
+    // Match [DocName, Page X] or [DocName, Page X-Y]  
+    return text.replace(
+      /\[([^\],]+),\s*Page\s+([^\]]+)\]/g,
+      (match, docName, pageNumText) => {
+        const trimmedDocName = docName.trim();
+        const firstPage = parseInt(pageNumText);
+        return ` **[${trimmedDocName}, Page ${pageNumText}](http://open-pdf/${encodeURIComponent(trimmedDocName)}/page/${firstPage})** `;
+      },
+    );
+  };
+
+  const handlePdfClick = (docName: string, page: number) => {
+    // Find the document by name — try exact match first, then case-insensitive, then partial
+    const normalizedName = docName.trim().toLowerCase();
+    const doc =
+      documents.find((d) => d.name === docName) ||
+      documents.find((d) => d.name.toLowerCase() === normalizedName) ||
+      documents.find((d) => d.name.toLowerCase().includes(normalizedName) || normalizedName.includes(d.name.toLowerCase()));
+
+    if (doc) {
+      setCurrentPdfUrl(`${API_BASE}/${doc.fileUrl}`);
+      setCurrentPdfName(doc.name);
+    } else {
+      console.warn(`Could not find document "${docName}" in user documents:`, documents.map(d => d.name));
+      // Last resort: use the first selected document
+      const fallbackDoc = documents.find((d) => selectedDocIds.has(d._id));
+      if (fallbackDoc) {
+        setCurrentPdfUrl(`${API_BASE}/${fallbackDoc.fileUrl}`);
+        setCurrentPdfName(fallbackDoc.name);
+      } else {
+        return; // No document to show
+      }
+    }
     setCurrentPdfPage(page);
     setIsPdfOpen(true);
   };
 
+  // --- Chat ---
   const handleSend = async () => {
-    if (!query.trim() || isLoading) return;
+    if (!query.trim() || isLoading || uploadingDoc) return;
 
     const userMessage: Message = { role: "user", content: query };
     setMessages((prev) => [...prev, userMessage]);
@@ -146,11 +264,17 @@ export default function FinancialAgent() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("http://localhost:5000/api/chat/stream", {
+      const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ message: currentQuery, sessionId: sessionId }),
+        body: JSON.stringify({
+          message: currentQuery,
+          sessionId: sessionId,
+          selectedDocumentNames: documents
+            .filter((d) => selectedDocIds.has(d._id))
+            .map((d) => d.name),
+        }),
       });
 
       if (!response.body) throw new Error("No response body");
@@ -206,10 +330,10 @@ export default function FinancialAgent() {
     );
 
   return (
-    // FIX 1: Main Container is h-screen and flex row
+    // Main Container
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
-      {/* FIX 2: Sidebar gets fixed width and shrink-0 so it never collapses */}
-      <div className="w-64 bg-slate-900 text-slate-50 flex flex-col border-r border-slate-800 shrink-0">
+      {/* Sidebar */}
+      <div className="w-72 bg-slate-900 text-slate-50 flex flex-col border-r border-slate-800 shrink-0">
         <div className="p-4 border-b border-slate-800 flex items-center gap-2 font-bold text-lg">
           <Bot className="h-6 w-6 text-blue-400" />
           <span>VeriDoc AI</span>
@@ -225,16 +349,103 @@ export default function FinancialAgent() {
           </Button>
         </div>
 
-        {/* Sidebar History - Standard Overflow */}
+        {/* Document Management Section */}
         <div className="flex-1 overflow-y-auto px-4 py-2">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-slate-500 mb-2 px-2 uppercase">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                My Documents
+              </p>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingDoc}
+                className="flex items-center gap-1 text-[10px] font-medium text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50 px-2 py-1 rounded hover:bg-slate-800"
+              >
+                {uploadingDoc ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <FileUp className="h-3 w-3" />
+                )}
+                Upload
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                onChange={handleUpload}
+                className="hidden"
+              />
+            </div>
+
+            {loadingDocs ? (
+              <div className="flex justify-center py-4">
+                <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
+              </div>
+            ) : documents.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-4">
+                No documents uploaded yet
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {documents.map((doc) => (
+                  <div
+                    key={doc._id}
+                    className="group flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-800/70 transition-colors"
+                  >
+                    {/* Checkbox */}
+                    <button
+                      onClick={() => toggleDocSelection(doc._id)}
+                      className="shrink-0 text-slate-400 hover:text-blue-400 transition-colors"
+                      title={
+                        selectedDocIds.has(doc._id)
+                          ? "Deselect from context"
+                          : "Select for context"
+                      }
+                    >
+                      {selectedDocIds.has(doc._id) ? (
+                        <CheckSquare className="h-4 w-4 text-blue-400" />
+                      ) : (
+                        <Square className="h-4 w-4" />
+                      )}
+                    </button>
+
+                    {/* Doc info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <FileText className="h-3 w-3 text-slate-500 shrink-0" />
+                        <span className="text-xs text-slate-300 truncate block">
+                          {doc.name}
+                        </span>
+                        {doc.isDefault && (
+                          <span title="Default document"><Star className="h-3 w-3 text-amber-400 shrink-0" /></span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Delete button */}
+                    <button
+                      onClick={() => handleDeleteDoc(doc._id)}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all"
+                      title="Delete document"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Divider */}
+            <div className="border-t border-slate-800 my-3" />
+
+            {/* Session Info */}
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Session Info
             </p>
             <div className="px-2 py-1.5 text-xs text-slate-400 font-mono bg-slate-950 rounded border border-slate-800 truncate">
               ID: {sessionId}
             </div>
-            <div className="mt-4 px-2">
+            <div className="mt-2 px-2">
               <p className="text-xs text-slate-500 mb-1">LOGGED IN AS</p>
               <p className="text-sm font-medium truncate">{user.email}</p>
             </div>
@@ -242,7 +453,7 @@ export default function FinancialAgent() {
         </div>
 
         <div className="p-4 border-t border-slate-800 flex justify-between items-center">
-          <span className="text-xs text-slate-500">v1.0.0</span>
+          <span className="text-xs text-slate-500">v2.0.0</span>
           <Button
             variant="ghost"
             size="icon"
@@ -261,7 +472,7 @@ export default function FinancialAgent() {
             <FileText className="h-4 w-4 text-slate-500" />
             <span className="font-medium">Active Context:</span>
             <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-100 text-xs font-bold">
-              Annual Report (2023)
+              {selectedDocIds.size} of {documents.length} document{documents.length !== 1 ? "s" : ""} selected
             </span>
           </div>
         </header>
@@ -293,28 +504,32 @@ export default function FinancialAgent() {
                   >
                     <ReactMarkdown
                       components={{
-                        // Inside ReactMarkdown components={{ ... }}
                         a: ({ node, href, children, ...props }) => {
-                          // Check for our special fake URL
-                          if (href?.includes("http://open-pdf/page/")) {
-                            const pageNum = parseInt(
-                              href.split("/").pop() || "1",
+                          // Check for our special multi-doc URL format
+                          if (href?.includes("http://open-pdf/")) {
+                            // Parse: http://open-pdf/{docName}/page/{pageNum}
+                            const match = href.match(
+                              /http:\/\/open-pdf\/(.+?)\/page\/(\d+)/,
                             );
+                            if (match) {
+                              const docName = decodeURIComponent(match[1]);
+                              const pageNum = parseInt(match[2]);
 
-                            return (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault(); // Stop navigation
-                                  e.stopPropagation(); // Stop bubbling
-                                  handlePdfClick(pageNum);
-                                }}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-1 -my-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-bold transition-colors border border-blue-200 align-middle"
-                              >
-                                <FileSearch className="w-3 h-3" />
-                                {children}
-                              </button>
-                            );
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handlePdfClick(docName, pageNum);
+                                  }}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-1 -my-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-bold transition-colors border border-blue-200 align-middle"
+                                >
+                                  <FileSearch className="w-3 h-3" />
+                                  {children}
+                                </button>
+                              );
+                            }
                           }
                           // Normal external links
                           return (
@@ -355,18 +570,24 @@ export default function FinancialAgent() {
         </div>
 
         <div className="p-4 bg-white border-t shrink-0">
+          {uploadingDoc && (
+            <div className="max-w-3xl mx-auto mb-3 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-xs font-medium">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Ingesting document... Chat and uploads are paused until processing is complete.
+            </div>
+          )}
           <div className="max-w-3xl mx-auto flex gap-2">
             <Input
-              placeholder="Ask about revenue, risks, or specific tables..."
+              placeholder={uploadingDoc ? "Waiting for document ingestion..." : "Ask about revenue, risks, or specific tables..."}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
               className="flex-1 focus-visible:ring-blue-600"
-              disabled={isLoading}
+              disabled={isLoading || uploadingDoc}
             />
             <Button
               onClick={handleSend}
-              disabled={isLoading}
+              disabled={isLoading || uploadingDoc}
               className="bg-blue-600 hover:bg-blue-700 w-12 px-0"
             >
               {isLoading ? (
@@ -384,11 +605,14 @@ export default function FinancialAgent() {
         </div>
       </div>
 
+
+      {/* "Currently I'm saving PDFs to disk for simplicity, but in production I'd replace this with cloud object storage like AWS S3, generate signed URLs for secure access, and process files in memory to avoid disk dependency — this would also make the app stateless and horizontally scalable." */}
       {isPdfOpen && (
         <PDFViewer
-          file="/report.pdf"
+          file={currentPdfUrl}
           pageNumber={currentPdfPage}
           onClose={() => setIsPdfOpen(false)}
+          docName={currentPdfName}
         />
       )}
     </div>

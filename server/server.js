@@ -3,12 +3,20 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import axios from 'axios';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import {Chat} from './models/chat.js';
 import User from './models/User.js';
+import Document from './models/Document.js';
 import auth from './middleware/auth.js';
+import documentRoutes from './routes/documentRoutes.js';
+import { provisionDefaultDocument } from './routes/documentRoutes.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 const app = express();
@@ -20,6 +28,9 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Serve uploaded files statically
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const PORT = process.env.PORT || 5000;
 const PYTHON_API_URL = "http://127.0.0.1:8000";
@@ -47,6 +58,15 @@ app.post('/api/auth/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(password, salt);
     await user.save();
+
+    // Provision default onboarding PDF for the new user
+    try {
+      await provisionDefaultDocument(user._id);
+      console.log(`📄 Default document provisioned for user ${user.email}`);
+    } catch (provisionErr) {
+      console.error('⚠️  Failed to provision default document:', provisionErr.message);
+      // Don't fail registration if provisioning fails
+    }
 
     const payload = { user: { id: user.id } };
     jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '5d' }, (err, token) => {
@@ -94,7 +114,7 @@ app.get('/api/auth/user', auth, async (req, res) => {
 
 // NEW: STREAMING ENDPOINT
 app.post('/api/chat/stream', auth, async (req, res) => {
-  const { message, sessionId } = req.body;
+  const { message, sessionId, selectedDocumentNames } = req.body;
 
   // 1. Setup headers for Server-Sent Events (SSE)
   res.setHeader('Content-Type', 'text/event-stream');
@@ -105,9 +125,13 @@ app.post('/api/chat/stream', auth, async (req, res) => {
     // 2. Save User Message Immediately
     await Chat.create({ sessionId, user: req.user.id, role: 'user', content: message });
 
-    // 3. Connect to Python Stream
+    // 3. Connect to Python Stream (with multi-tenant filtering)
     const pythonResponse = await axios.post(`${PYTHON_API_URL}/stream`, 
-      { question: message },
+      { 
+        question: message,
+        user_id: req.user.id,
+        selected_doc_names: selectedDocumentNames || []
+      },
       { responseType: 'stream' } // Critical: Tell Axios to stream the response
     );
 
@@ -167,5 +191,8 @@ app.get('/api/history/:sessionId', auth, async (req, res) => {
     res.status(500).json({ error: "Could not fetch history" });
   }
 });
+
+// --- DOCUMENT ROUTES ---
+app.use('/api/documents', documentRoutes);
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

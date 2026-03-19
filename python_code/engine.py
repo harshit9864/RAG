@@ -1,5 +1,6 @@
 import os
-from typing import List
+import tempfile
+from typing import List, Optional
 from dotenv import load_dotenv
 
 import pdfplumber 
@@ -93,12 +94,14 @@ IMPORTANT INSTRUCTIONS:
 - For date-based queries, pay attention to fiscal years and calendar years
 - If you need to sum or calculate values, show your work
 - If the answer is not in the context, say "I cannot find this information in the provided context"
+- Context blocks are labeled with [DocumentName, Page X] — treat each label as a different company/source
+- For comparison questions, extract information from EACH labeled source separately
 
 IMPORTANT CITATION RULE:
-- Every time you state a fact, you MUST verify which "[Page X]" block it came from.
-- You must cite the page number at the end of the sentence.
-- Format citations exactly like this: [Page 5] or [Page 12].
-- Do not make up page numbers.
+- Every time you state a fact, you MUST cite the document name and page number it came from.
+- Format citations exactly like this: [DocName, Page 5] or [Report.pdf, Page 12].
+- The DocName comes from the "[DocName, Page X]" header in the context blocks below.
+- Do not make up page numbers or document names.
 
 Context: {context}
 
@@ -121,8 +124,7 @@ Answer:"""
 
         return {"rag": rag_chain, "quality": quality_grader}
 
-    def _load_pdf_with_layout(self, file_path: str) -> List[Document]:
-        # ... (Same as before) ...
+    def _load_pdf_with_layout(self, file_path: str, user_id: str = "", doc_id: str = "", doc_name: str = "") -> List[Document]:
         print(f"... Ingesting {file_path} with Layout Preservation ...")
         documents = []
         with pdfplumber.open(file_path) as pdf:
@@ -141,18 +143,27 @@ Answer:"""
                             page_content += " | ".join(row) + " |\n"
                 
                 if page_content.strip():
+                    metadata = {"page": i+1, "source": file_path}
+                    # Inject multi-tenant metadata if provided
+                    if user_id:
+                        metadata["user_id"] = user_id
+                    if doc_id:
+                        metadata["doc_id"] = doc_id
+                    if doc_name:
+                        metadata["doc_name"] = doc_name
+                    
                     documents.append(Document(
                         page_content=page_content, 
-                        metadata={"page": i+1, "source": file_path}
+                        metadata=metadata
                     ))
         
         print(f"... Loaded {len(documents)} pages")
         return documents
 
-    def ingest_document(self, file_path: str):
-        print(f"\n--- 1. Ingesting Document: {file_path} ---")
+    def ingest_document(self, file_path: str, user_id: str = "", doc_id: str = "", doc_name: str = ""):
+        print(f"\n--- 1. Ingesting Document: {file_path} (user={user_id}, doc={doc_id}) ---")
         
-        docs = self._load_pdf_with_layout(file_path)
+        docs = self._load_pdf_with_layout(file_path, user_id=user_id, doc_id=doc_id, doc_name=doc_name)
         
         parent_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=300)
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
@@ -240,7 +251,7 @@ Answer:"""
     def stream_query(self, question: str):
         """
         Generator function that yields the answer token-by-token.
-        Uses the existing RAG chain.
+        Uses the existing RAG chain (unfiltered — legacy support).
         """
         if not self.multi_query_retriever:
             self._init_retriever()
@@ -249,12 +260,76 @@ Answer:"""
         
         docs = self.multi_query_retriever.invoke(question)
         context = "\n\n".join([
-            f"[Page {doc.metadata.get('page', 'Unknown')}] {doc.page_content}" 
+            f"[{doc.metadata.get('doc_name', 'Document')}, Page {doc.metadata.get('page', '?')}] {doc.page_content}" 
             for doc in docs
         ])
         
-        
         input_data = {"context": context, "question": question}
         
+        for token in self.chains["rag"].stream(input_data):
+            yield token
+
+    def stream_query_filtered(self, question: str, user_id: str, selected_doc_names: List[str] = []):
+        """
+        Multi-tenant streaming query with pre-filtering.
+        Only retrieves chunks belonging to the given user and selected documents.
+        """
+        print(f"   > Filtered Streaming Query: user={user_id}, doc_names={selected_doc_names}")
+    
+        docs = []
+        
+        try:
+            pre_filter = {"user_id": user_id}
+
+            if selected_doc_names and len(selected_doc_names) > 1:
+                # FIX: Retrieve separately per document to ensure equal representation
+                docs_per_doc = max(3, 6 // len(selected_doc_names))  # distribute k evenly
+                
+                for doc_name in selected_doc_names:
+                    per_filter = {"user_id": user_id, "doc_name": doc_name}
+                    retrieved = self.vectorstore.similarity_search(
+                        query=question,
+                        k=docs_per_doc,
+                        pre_filter=per_filter
+                    )
+                    print(f"   > Retrieved {len(retrieved)} chunks from {doc_name}")
+                    docs.extend(retrieved)
+            
+            elif selected_doc_names:
+                # Single document — normal flow
+                pre_filter["doc_name"] = selected_doc_names[0]
+                docs = self.vectorstore.similarity_search(
+                    query=question,
+                    k=6,
+                    pre_filter=pre_filter
+                )
+            
+            else:
+                # No doc filter
+                docs = self.vectorstore.similarity_search(
+                    query=question,
+                    k=6,
+                    pre_filter=pre_filter
+                )
+
+            print(f"   > Total retrieved: {len(docs)} chunks across all docs")
+
+        except Exception as e:
+            print(f"   > ERROR in filtered retrieval: {e}")
+            yield "I encountered an error while retrieving documents. Please try again."
+            return
+
+        if not docs:
+            yield "No relevant information found in the selected documents."
+            return
+
+        # Label each chunk clearly so LLM knows which company it came from
+        context = "\n\n".join([
+            f"[{doc.metadata.get('doc_name', 'Document')}, Page {doc.metadata.get('page', '?')}]\n{doc.page_content}"
+            for doc in docs
+        ])
+
+        input_data = {"context": context, "question": question}
+
         for token in self.chains["rag"].stream(input_data):
             yield token

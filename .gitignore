@@ -13,3 +13,6 @@ build/
 
 # Logs
 *.log
+
+# User uploads (generated at runtime)
+server/uploads/
