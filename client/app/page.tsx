@@ -37,7 +37,7 @@ const PDFViewer = dynamic(() => import("./components/PDFViewer"), {
   ),
 });
 
-const API_BASE = "http://localhost:5000";
+const API_BASE = "http://localhost:5713";
 
 const generateSessionId = () =>
   `session_${Math.random().toString(36).substring(7)}`;

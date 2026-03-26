@@ -148,7 +148,7 @@ Answer:"""
                     if user_id:
                         metadata["user_id"] = user_id
                     if doc_id:
-                        metadata["doc_id"] = doc_id
+                        metadata["source_id"] = doc_id
                     if doc_name:
                         metadata["doc_name"] = doc_name
                     
@@ -246,7 +246,43 @@ Answer:"""
 
     def query(self, question: str, debug: bool = False):
         return self.run_pipeline(question, debug)
-    
+
+    def delete_document(self, user_id: str, doc_name: str) -> dict:
+        """
+        Removes all vector chunks and parent documents for a given user + document name.
+        """
+        print(f"\n--- Deleting document: '{doc_name}' for user={user_id} ---")
+
+        child_filter = {"user_id": user_id, "doc_name": doc_name}
+
+        # 1. Safely find the exact parent document UUIDs referenced by the child chunks
+        #    LangChain stores the parent ID in the child chunk under 'doc_id'
+        child_docs = list(self.collection.find(child_filter, {"doc_id": 1}))
+        
+        # We extract the parent UUIDs safely
+        parent_uuids = list(set([doc.get("doc_id") for doc in child_docs if doc.get("doc_id")]))
+
+        # 2. Delete child chunks (vector embeddings) from the reports collection
+        child_result = self.collection.delete_many(child_filter)
+        child_deleted = child_result.deleted_count
+        print(f"   > Deleted {child_deleted} child chunks from 'reports'")
+
+        # 3. Delete parent documents using exact keys
+        #    The parent_docs collection uses {"id": "UUID"} structurally under the hood, 
+        #    or we can use our EncoderBackedStore directly:
+        parent_deleted = 0
+        if parent_uuids:
+            self.docstore.mdelete(parent_uuids)
+            parent_deleted = len(parent_uuids)
+            print(f"   > Deleted {parent_deleted} parent docs from 'parent_docs'")
+
+        print(f"--- Deletion Complete ---")
+
+        return {
+            "child_chunks_deleted": child_deleted,
+            "parent_docs_deleted": parent_deleted
+        }
+
     
     def stream_query(self, question: str):
         """
@@ -324,6 +360,7 @@ Answer:"""
             return
 
         # Label each chunk clearly so LLM knows which company it came from
+        print(docs[0])
         context = "\n\n".join([
             f"[{doc.metadata.get('doc_name', 'Document')}, Page {doc.metadata.get('page', '?')}]\n{doc.page_content}"
             for doc in docs

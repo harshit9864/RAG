@@ -32,7 +32,7 @@ app.use(cookieParser());
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5713;
 const PYTHON_API_URL = "http://127.0.0.1:8000";
 
 // DB Connection

@@ -151,13 +151,25 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to delete this document' });
     }
 
-    // Delete file from disk
+    // 1. Delete vectors from Python AI engine
+    try {
+      const deleteRes = await axios.delete(`${PYTHON_API_URL}/delete`, {
+        params: { user_id: req.user.id, doc_name: doc.name },
+        timeout: 30000
+      });
+      console.log(`✅ Vectors deleted for "${doc.name}": ${JSON.stringify(deleteRes.data)}`);
+    } catch (pyErr) {
+      console.warn(`⚠️  Python vector deletion failed for "${doc.name}": ${pyErr.message}`);
+      // Continue with local cleanup even if Python fails
+    }
+
+    // 2. Delete file from disk
     const filePath = path.join(__dirname, '..', doc.fileUrl);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
 
-    // Delete DB record
+    // 3. Delete DB record
     await Document.findByIdAndDelete(req.params.id);
 
     res.json({ msg: 'Document deleted successfully' });

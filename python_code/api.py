@@ -74,6 +74,22 @@ async def upload_document(
         # Clean up temp file
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+# --- DELETE: Remove document vectors ---
+@app.delete("/delete")
+async def delete_document(user_id: str, doc_name: str):
+    """
+    Deletes all vector chunks and parent documents for a given user + document name.
+    Called by the Node.js backend when a user deletes a PDF.
+    """
+    if not rag_engine:
+        raise HTTPException(status_code=500, detail="AI Engine not initialized")
+
+    try:
+        result = rag_engine.delete_document(user_id=user_id, doc_name=doc_name)
+        return {"status": "success", **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Deletion failed: {str(e)}")
+
 # --- UPDATED: Streaming endpoint with multi-tenant filtering ---
 @app.post("/stream")
 async def stream_query_endpoint(request: StreamRequest):

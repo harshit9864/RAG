@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUser = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/auth/user');
+      const res = await axios.get('http://localhost:5713/api/auth/user');
       setUser(res.data);
     } catch (err) {
       setUser(null);
@@ -42,7 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
-      await axios.post('http://localhost:5000/api/auth/logout');
+      await axios.post('http://localhost:5713/api/auth/logout');
       setUser(null);
       router.push('/login');
     } catch (err) {

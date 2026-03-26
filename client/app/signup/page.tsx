@@ -15,7 +15,7 @@ export default function SignupPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await axios.post('http://localhost:5000/api/auth/register', { email, password });
+      const res = await axios.post('http://localhost:5713/api/auth/register', { email, password });
       login(res.data.token);
     } catch (err) {
       console.error(err);
