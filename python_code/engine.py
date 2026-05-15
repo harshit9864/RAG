@@ -24,7 +24,7 @@ from langchain_core.documents import Document
 
 load_dotenv()
 
-LLM_MODEL = "accounts/fireworks/models/kimi-k2-instruct-0905"
+LLM_MODEL = "accounts/fireworks/models/kimi-k2p5"
 EMBEDDING_MODEL = "mistral-embed"
 
 class GradeAnswerQuality(BaseModel):
